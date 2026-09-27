@@ -1,0 +1,1 @@
+1. After rproject setup start with `npm install supertokens-node cors`
