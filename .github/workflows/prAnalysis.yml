@@ -72,7 +72,7 @@ jobs:
           echo "All fixes passed syntax validation."
 
       - name: Lint (ESLint)
-        run: npm run Lint
+        run: npm run lint
 
       - name: Dependency vulnerability audit
         run: npm audit --audit-level=high

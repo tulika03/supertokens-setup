@@ -8,6 +8,7 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/server.js",
+    "lint": "eslint...",
     "dev": "node --watch src/server.js",
     "test": "node --test"
   },
