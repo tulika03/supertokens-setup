@@ -1,0 +1,147 @@
+name: PR code analysis
+
+on:
+  pull_request:
+    types: [opened, synchroized, reopened]
+    branches: [test, uat, main]
+
+permissions: 
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  validate-source-branch:
+    name: Validate PR source branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check promotion path
+        env:
+          BASE_REF: ${{github.base_ref}}
+          HEAD_REF: ${{github.head_ref}}
+        run: |
+          echo "PR: '$HEAD_REF' -> '$BASE_REF'"
+
+          case "$BASE_REF" in 
+            uat)
+              if ["$HEAD_REF" != "test"]; then
+                echo "::error::PRs into 'uat' must come from test (got $HEAD_REF)"
+                exit 1
+              fi
+              ;;
+
+            main|prod)
+              if [ "$HEAD_REF" != "uat" ]; then
+                echo "::error::PRs into '$BASE_REF' must come from 'uat' (got '$HEAD_REF')."
+                exit 1
+              fi
+              ;;
+
+            test)
+              # No restriction: branches merge into test freely.
+              echo "No source-branch restriction for target 'test'."
+              ;;
+            *)
+              echo "::notice::No promotion rule defined for base '$BASE_REF'; allowing."
+              ;;
+          esac
+
+  build-test-analyze:
+    name: Build, test, analyze
+    needs: validate-source-branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for new-code-detection)
+        uses: actions/checkout@v4
+        with: 
+          fetch-depth: 0
+
+      - name: Setup Node.js 
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+
+      - name: Node.js syntax validation
+        run: |
+          find src -name "*.js" -print0 | xargs -0 -n1 node --check 
+          echo "All fixes passed syntax validation."
+
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      - name: Dependency vulnerability audit
+        run: npm audit --audit-level=high
+
+      - name: Determine files changed in the PR
+        id: changed-files
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'src/**/*.js' \
+            | grep -v -E '\.(test|spec)\.js$' || true)
+           echo "Changed source files:"
+          echo "$CHANGED"
+          # Store as newline-safe output for the next step
+          {
+            echo "files<<EOF"
+            echo "$CHANGED"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT
+
+      - name: Run unit tests with coverage (scoped to PR changes)
+        run: |
+          mkdir -p coverage
+          FILES="${{ steps.changed-files.outputs.files }}"
+ 
+          # Base flags: always run the FULL test suite, always emit junit + lcov
+          BASE_FLAGS=(--test --experimental-test-coverage
+            --test-reporter=spec --test-reporter-destination=stdout
+            --test-reporter=junit --test-reporter-destination=junit.xml
+            --test-reporter=lcov --test-reporter-destination=coverage/lcov.info)
+ 
+          if [ -z "$FILES" ]; then
+            echo "No changed .js source files detected (docs/config-only PR?) — running full suite, coverage informational only."
+            node "${BASE_FLAGS[@]}"
+          else
+            INCLUDE_ARGS=()
+            while IFS= read -r f; do
+              [ -n "$f" ] && INCLUDE_ARGS+=(--test-coverage-include="$f")
+            done <<< "$FILES"
+            node "${BASE_FLAGS[@]}" "${INCLUDE_ARGS[@]}"
+          fi
+
+      # Retain coverage + test results as build evidence (traceability artifact)
+      - name: Archive test & coverage evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-${{ github.event.pull_request.number }}-${{ github.sha }}
+          path: |
+            coverage/
+            junit.xml
+          retention-days: 400   # align with your document-control retention policy
+ 
+      # --- SonarCloud (disabled until SONAR_TOKEN / org is set up) ---
+      # Uncomment both steps below once the SonarCloud project + secret exist.
+      # Also re-add "pull-requests: write" is already set above for PR decoration.
+      #
+      # - name: SonarCloud Scan
+      #   uses: SonarSource/sonarqube-scan-action@v4
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      #
+      # # This is the gate that actually blocks the PR — analysis alone doesn't fail the build
+      # - name: SonarCloud Quality Gate check
+      #   uses: SonarSource/sonarqube-quality-gate-action@v1
+      #   timeout-minutes: 5
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+ 
+
+
+
+          

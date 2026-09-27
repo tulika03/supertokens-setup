@@ -44,7 +44,6 @@ When the repository has no established structure, prefer:
 Keep modules small and avoid circular dependencies.
 
 
-
 ## Implementation Workflow
 1. Inspect package metadata, existing source, scripts, environment examples, migrations, and tests before editing.
 2. Identify the direct owning layer for the requested behavior and state the smallest change that will prove it works.
