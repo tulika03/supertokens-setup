@@ -59,7 +59,7 @@ jobs:
       - name: Setup Node.js 
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - name: Install dependencies
@@ -94,16 +94,24 @@ jobs:
 
       - name: Run unit tests with coverage (scoped to PR changes)
         run: |
+          mkdir -p coverage
           FILES="${{ steps.changed-files.outputs.files }}"
+ 
+          # Base flags: always run the FULL test suite, always emit junit + lcov
+          BASE_FLAGS=(--test --experimental-test-coverage
+            --test-reporter=spec --test-reporter-destination=stdout
+            --test-reporter=junit --test-reporter-destination=junit.xml
+            --test-reporter=lcov --test-reporter-destination=coverage/lcov.info)
+ 
           if [ -z "$FILES" ]; then
             echo "No changed .js source files detected (docs/config-only PR?) — running full suite, coverage informational only."
-            npm run test -- --coverage --coverageReporters=lcov --coverageReporters=text
+            node "${BASE_FLAGS[@]}"
           else
-            ARGS=()
+            INCLUDE_ARGS=()
             while IFS= read -r f; do
-              [ -n "$f" ] && ARGS+=(--collectCoverageFrom="$f")
+              [ -n "$f" ] && INCLUDE_ARGS+=(--test-coverage-include="$f")
             done <<< "$FILES"
-            npm run test -- --coverage --coverageReporters=lcov --coverageReporters=text "${ARGS[@]}"
+            node "${BASE_FLAGS[@]}" "${INCLUDE_ARGS[@]}"
           fi
 
       # Retain coverage + test results as build evidence (traceability artifact)
